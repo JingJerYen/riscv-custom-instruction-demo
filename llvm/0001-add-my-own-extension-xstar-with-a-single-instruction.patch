@@ -1,0 +1,154 @@
+From 4a3ee50e21effc229d0a3a4895ebd4d4347f2bcb Mon Sep 17 00:00:00 2001
+From: yjj <yanglassnake@gmail.com>
+Date: Sun, 6 Apr 2025 21:37:08 +0800
+Subject: [PATCH] add my own extension xstar with a single instruction xmac
+
+---
+ clang/include/clang/Basic/BuiltinsRISCV.def  |  3 +++
+ clang/lib/CodeGen/CGBuiltin.cpp              |  7 ++++++
+ llvm/include/llvm/IR/IntrinsicsRISCV.td      | 11 +++++++++
+ llvm/lib/Support/RISCVISAInfo.cpp            |  1 +
+ llvm/lib/Target/RISCV/RISCVFeatures.td       |  6 +++++
+ llvm/lib/Target/RISCV/RISCVInstrInfo.td      |  1 +
+ llvm/lib/Target/RISCV/RISCVInstrInfoXStar.td | 25 ++++++++++++++++++++
+ llvm/test/MC/RISCV/xstar/xmac.s              |  6 +++++
+ 8 files changed, 60 insertions(+)
+ create mode 100644 llvm/lib/Target/RISCV/RISCVInstrInfoXStar.td
+ create mode 100644 llvm/test/MC/RISCV/xstar/xmac.s
+
+diff --git a/clang/include/clang/Basic/BuiltinsRISCV.def b/clang/include/clang/Basic/BuiltinsRISCV.def
+index 50e912c2c..444075e1c 100644
+--- a/clang/include/clang/Basic/BuiltinsRISCV.def
++++ b/clang/include/clang/Basic/BuiltinsRISCV.def
+@@ -89,5 +89,8 @@ TARGET_BUILTIN(__builtin_riscv_sm3p1, "UiUi", "nc", "zksh")
+ TARGET_BUILTIN(__builtin_riscv_ntl_load, "v.", "t", "experimental-zihintntl")
+ TARGET_BUILTIN(__builtin_riscv_ntl_store, "v.", "t", "experimental-zihintntl")
+ 
++BUILTIN(__builtin_riscv_xmac, "iiii", "n")
++
++
+ #undef BUILTIN
+ #undef TARGET_BUILTIN
+diff --git a/clang/lib/CodeGen/CGBuiltin.cpp b/clang/lib/CodeGen/CGBuiltin.cpp
+index 30f5f4e70..615805ee5 100644
+--- a/clang/lib/CodeGen/CGBuiltin.cpp
++++ b/clang/lib/CodeGen/CGBuiltin.cpp
+@@ -20240,6 +20240,13 @@ Value *CodeGenFunction::EmitRISCVBuiltinExpr(unsigned BuiltinID,
+   llvm::SmallVector<llvm::Type *, 2> IntrinsicTypes;
+   switch (BuiltinID) {
+   default: llvm_unreachable("unexpected builtin ID");
++  case RISCV::BI__builtin_riscv_xmac: {
++    llvm::Value *Arg0 = EmitScalarExpr(E->getArg(0));
++    llvm::Value *Arg1 = EmitScalarExpr(E->getArg(1));
++    llvm::Value *Arg2 = EmitScalarExpr(E->getArg(2));
++    llvm::Function *F = CGM.getIntrinsic(llvm::Intrinsic::riscv_xmac);
++    return Builder.CreateCall(F, {Arg0, Arg1, Arg2});
++  }
+   case RISCV::BI__builtin_riscv_orc_b_32:
+   case RISCV::BI__builtin_riscv_orc_b_64:
+   case RISCV::BI__builtin_riscv_clz_32:
+diff --git a/llvm/include/llvm/IR/IntrinsicsRISCV.td b/llvm/include/llvm/IR/IntrinsicsRISCV.td
+index e3476b160..edd43acec 100644
+--- a/llvm/include/llvm/IR/IntrinsicsRISCV.td
++++ b/llvm/include/llvm/IR/IntrinsicsRISCV.td
+@@ -1841,3 +1841,14 @@ def int_riscv_sm3p1      : ScalarCryptoGprIntrinsic32;
+ //===----------------------------------------------------------------------===//
+ include "llvm/IR/IntrinsicsRISCVXTHead.td"
+ include "llvm/IR/IntrinsicsRISCVXsf.td"
++
++
++let TargetPrefix = "riscv" in {
++    class XStarXMACIntrinsic32
++        : DefaultAttrsIntrinsic<[llvm_i32_ty],
++                                [llvm_i32_ty, llvm_i32_ty, llvm_i32_ty],
++                                [IntrNoMem]>;
++
++    def int_riscv_xmac : XStarXMACIntrinsic32,
++                        ClangBuiltin<"__builtin_riscv_xmac">;
++}
+\ No newline at end of file
+diff --git a/llvm/lib/Support/RISCVISAInfo.cpp b/llvm/lib/Support/RISCVISAInfo.cpp
+index 70fab8010..311b1c0cb 100644
+--- a/llvm/lib/Support/RISCVISAInfo.cpp
++++ b/llvm/lib/Support/RISCVISAInfo.cpp
+@@ -70,6 +70,7 @@ static const RISCVSupportedExtension SupportedExtensions[] = {
+     {"xcvmac", RISCVExtensionVersion{1, 0}},
+     {"xsfcie", RISCVExtensionVersion{1, 0}},
+     {"xsfvcp", RISCVExtensionVersion{1, 0}},
++    {"xstar", RISCVExtensionVersion{1, 0}},
+     {"xtheadba", RISCVExtensionVersion{1, 0}},
+     {"xtheadbb", RISCVExtensionVersion{1, 0}},
+     {"xtheadbs", RISCVExtensionVersion{1, 0}},
+diff --git a/llvm/lib/Target/RISCV/RISCVFeatures.td b/llvm/lib/Target/RISCV/RISCVFeatures.td
+index 4ce9c41ea..aa2b0f4be 100644
+--- a/llvm/lib/Target/RISCV/RISCVFeatures.td
++++ b/llvm/lib/Target/RISCV/RISCVFeatures.td
+@@ -790,6 +790,12 @@ def HasVendorXCVmac : Predicate<"Subtarget->hasVendorXCVmac()">,
+                                 AssemblerPredicate<(all_of FeatureVendorXCVmac),
+                                 "'XCVmac' (CORE-V Multiply-Accumulate)">;
+ 
++def FeatureVendorXStar
++    : SubtargetFeature<"xstar", "HasVendorXStar", "true",
++                       "'XStar' (My customized extension)">;
++def HasVendorXStar : Predicate<"Subtarget->hasVendorXStar()">,
++                                AssemblerPredicate<(all_of FeatureVendorXStar),
++                                "'XStar (My customized extension))">;
+ //===----------------------------------------------------------------------===//
+ // LLVM specific features and extensions
+ //===----------------------------------------------------------------------===//
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfo.td b/llvm/lib/Target/RISCV/RISCVInstrInfo.td
+index e58e3412a..01e022862 100644
+--- a/llvm/lib/Target/RISCV/RISCVInstrInfo.td
++++ b/llvm/lib/Target/RISCV/RISCVInstrInfo.td
+@@ -1970,3 +1970,4 @@ include "RISCVInstrInfoXVentana.td"
+ include "RISCVInstrInfoXTHead.td"
+ include "RISCVInstrInfoXSf.td"
+ include "RISCVInstrInfoXCV.td"
++include "RISCVInstrInfoXStar.td"
+\ No newline at end of file
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoXStar.td b/llvm/lib/Target/RISCV/RISCVInstrInfoXStar.td
+new file mode 100644
+index 000000000..91fbdd69c
+--- /dev/null
++++ b/llvm/lib/Target/RISCV/RISCVInstrInfoXStar.td
+@@ -0,0 +1,25 @@
++// my customized ALU instructions
++// Constraints : operand constraints
++
++
++let Predicates = [HasVendorXStar, IsRV32] in {
++
++    let Constraints = "$rd = $rd_wb", mayLoad = 0, mayStore = 0 in {
++        def XMAC : RVInstR<0b0000001, 0b000, OPC_CUSTOM_3, (outs GPR:$rd_wb),
++                        (ins GPR:$rd, GPR:$rs1, GPR:$rs2),
++                        "xmac", "$rd, $rs1, $rs2">,
++                Sched<[]>;
++    }
++
++    // add (mul x, y), z --> xmac z, x, y
++    def : Pat<(XLenVT (add (XLenVT (mul GPR:$rs1, GPR:$rs2)), GPR:$rd)),
++            (XMAC GPR:$rd, GPR:$rs1, GPR:$rs2)>;
++
++    // int_riscv_xmac(rd, rs1, rs2) --> xmac rd, rs1, rs2
++    def : Pat<(XLenVT (int_riscv_xmac GPR:$rd, GPR:$rs2, GPR:$rs1)),
++            (XMAC GPR:$rd, GPR:$rs1, GPR:$rs2)>;
++
++}
++
++
++
+diff --git a/llvm/test/MC/RISCV/xstar/xmac.s b/llvm/test/MC/RISCV/xstar/xmac.s
+new file mode 100644
+index 000000000..cc68cd17e
+--- /dev/null
++++ b/llvm/test/MC/RISCV/xstar/xmac.s
+@@ -0,0 +1,6 @@
++# RUN: llvm-mc -triple=riscv32 -mattr=+xstar --show-encoding %s | FileCheck %s
++
++xmac a2, a1, a0
++# CHECK: xmac a2, a1, a0
++# CHECK: encoding: [0x7b,0x86,0xa5,0x02]
++
+-- 
+2.47.1
+
