@@ -1,0 +1,134 @@
+From bb814ebe555abb7f890a43f19c53182fbb7e864e Mon Sep 17 00:00:00 2001
+From: ycc738 <ycc738@andestech.com>
+Date: Tue, 21 Oct 2025 14:56:31 +0800
+Subject: [PATCH] add support to vwcmul and vrotate for complex number array
+
+---
+ riscv/encoding.h        |  9 ++++++++
+ riscv/insns/vwcmul_vv.h | 51 +++++++++++++++++++++++++++++++++++++++++
+ riscv/riscv.mk.in       |  3 +++
+ 3 files changed, 63 insertions(+)
+ create mode 100644 riscv/insns/vwcmul_vv.h
+
+diff --git a/riscv/encoding.h b/riscv/encoding.h
+index 7743f842..29630e97 100644
+--- a/riscv/encoding.h
++++ b/riscv/encoding.h
+@@ -2307,6 +2307,10 @@
+ #define MASK_VSRA_VV 0xfc00707f
+ #define MATCH_VSRA_VX 0xa4004057
+ #define MASK_VSRA_VX 0xfc00707f
++#define MATCH_VROTATE_VI 0xf8003057
++#define MASK_VROTATE_VI 0xfc00707f
++#define MATCH_VROTATE_VX 0xf8000057
++#define MASK_VROTATE_VX 0xfc00707f
+ #define MATCH_VSRL_VI 0xa0003057
+ #define MASK_VSRL_VI 0xfc00707f
+ #define MATCH_VSRL_VV 0xa0000057
+@@ -2395,6 +2399,8 @@
+ #define MASK_VWMULU_VV 0xfc00707f
+ #define MATCH_VWMULU_VX 0xe0006057
+ #define MASK_VWMULU_VX 0xfc00707f
++#define MATCH_VWCMUL_VV 0xe4002057
++#define MASK_VWCMUL_VV 0xfc00707f
+ #define MATCH_VWREDSUM_VS 0xc4000057
+ #define MASK_VWREDSUM_VS 0xfc00707f
+ #define MATCH_VWREDSUMU_VS 0xc0000057
+@@ -3933,6 +3939,8 @@ DECLARE_INSN(vsoxei8_v, MATCH_VSOXEI8_V, MASK_VSOXEI8_V)
+ DECLARE_INSN(vsra_vi, MATCH_VSRA_VI, MASK_VSRA_VI)
+ DECLARE_INSN(vsra_vv, MATCH_VSRA_VV, MASK_VSRA_VV)
+ DECLARE_INSN(vsra_vx, MATCH_VSRA_VX, MASK_VSRA_VX)
++DECLARE_INSN(vrotate_vi, MATCH_VROTATE_VI, MASK_VROTATE_VI)
++DECLARE_INSN(vrotate_vx, MATCH_VROTATE_VX, MASK_VROTATE_VX)
+ DECLARE_INSN(vsrl_vi, MATCH_VSRL_VI, MASK_VSRL_VI)
+ DECLARE_INSN(vsrl_vv, MATCH_VSRL_VV, MASK_VSRL_VV)
+ DECLARE_INSN(vsrl_vx, MATCH_VSRL_VX, MASK_VSRL_VX)
+@@ -3977,6 +3985,7 @@ DECLARE_INSN(vwmulsu_vv, MATCH_VWMULSU_VV, MASK_VWMULSU_VV)
+ DECLARE_INSN(vwmulsu_vx, MATCH_VWMULSU_VX, MASK_VWMULSU_VX)
+ DECLARE_INSN(vwmulu_vv, MATCH_VWMULU_VV, MASK_VWMULU_VV)
+ DECLARE_INSN(vwmulu_vx, MATCH_VWMULU_VX, MASK_VWMULU_VX)
++DECLARE_INSN(vwcmul_vv, MATCH_VWCMUL_VV, MASK_VWCMUL_VV)
+ DECLARE_INSN(vwredsum_vs, MATCH_VWREDSUM_VS, MASK_VWREDSUM_VS)
+ DECLARE_INSN(vwredsumu_vs, MATCH_VWREDSUMU_VS, MASK_VWREDSUMU_VS)
+ DECLARE_INSN(vwsll_vi, MATCH_VWSLL_VI, MASK_VWSLL_VI)
+diff --git a/riscv/insns/vwcmul_vv.h b/riscv/insns/vwcmul_vv.h
+new file mode 100644
+index 00000000..f1b4d253
+--- /dev/null
++++ b/riscv/insns/vwcmul_vv.h
+@@ -0,0 +1,51 @@
++// vwcmul.vv vd, vs2, vs1
++// Widening complex multiplication: (a+bi) * (c+di) = (ac-bd) + (ad+bc)i
++// Input: vs2 and vs1 store [real_1, imag_1, real_2, imag_2, ...]
++// Output: vd stores widened [real_1, imag_1, real_2, imag_2, ...]
++VI_CHECK_DSS(true);
++VI_VV_LOOP_WIDEN
++({
++  // Process pairs of elements (real, imaginary)
++  // For complex multiply: (a+bi)(c+di) = (ac-bd) + (ad+bc)i
++  // vs2 and vs1 have the source types, vd has the widened type
++
++  // Get the pair index
++  uint64_t pair_idx = i & ~1;  // Round down to even index
++
++  using Ty = std::remove_reference_t<decltype(vd)>;
++
++  auto a = P.VU.elt<decltype(vs2)>(rs2_num, pair_idx);      // real part from vs2
++  auto b = P.VU.elt<decltype(vs2)>(rs2_num, pair_idx + 1);  // imaginary part from vs2
++  auto c = P.VU.elt<decltype(vs1)>(rs1_num, pair_idx);      // real part from vs1
++  auto d = P.VU.elt<decltype(vs1)>(rs1_num, pair_idx + 1);  // imaginary part from vs1
++  auto& vd_res1 = P.VU.elt<Ty>(rd_num, pair_idx, true);
++  auto& vd_res2 = P.VU.elt<Ty>(rd_num, pair_idx+1, true);
++
++  if ((i & 1) == 0) {
++    // Even index: compute real part (ac - bd)
++    Ty real = (Ty)(a) * (Ty)(c) - (Ty)(b) * (Ty)(d);
++    // odd index: compute imaginary part (ad + bc)
++    Ty imag = (Ty)(a) * (Ty)(d) + (Ty)(b) * (Ty)(c);
++    switch (sew)
++    {
++    case 8:
++    {
++        (*p).VU.elt<uint16_t>(rd_num, pair_idx, true) = real;
++        (*p).VU.elt<uint16_t>(rd_num, pair_idx+1, true) = imag;
++    }
++    break;
++    case 16:
++    {
++        (*p).VU.elt<uint32_t>(rd_num, pair_idx, true) = real;
++        (*p).VU.elt<uint32_t>(rd_num, pair_idx+1, true) = imag;
++    }
++    break;
++    default: // 32
++    {
++        (*p).VU.elt<uint64_t>(rd_num, pair_idx, true) = real;
++        (*p).VU.elt<uint64_t>(rd_num, pair_idx+1, true) = imag;
++    }
++    break;
++    };
++  }
++})
+diff --git a/riscv/riscv.mk.in b/riscv/riscv.mk.in
+index 74009a1a..8e019ab3 100644
+--- a/riscv/riscv.mk.in
++++ b/riscv/riscv.mk.in
+@@ -640,6 +640,8 @@ riscv_insn_ext_v_alu_int = \
+ 	vsra_vi \
+ 	vsra_vv \
+ 	vsra_vx \
++	vrotate_vi \
++	vrotate_vx \
+ 	vsrl_vi \
+ 	vsrl_vv \
+ 	vsrl_vx \
+@@ -676,6 +678,7 @@ riscv_insn_ext_v_alu_int = \
+ 	vwmulsu_vx \
+ 	vwmulu_vv \
+ 	vwmulu_vx \
++	vwcmul_vv \
+ 	vwredsum_vs \
+ 	vwredsumu_vs \
+ 	vwsub_vv \
+-- 
+2.49.0
+
