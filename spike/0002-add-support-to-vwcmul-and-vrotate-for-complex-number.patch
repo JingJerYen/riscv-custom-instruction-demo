@@ -1,7 +1,8 @@
 From bb814ebe555abb7f890a43f19c53182fbb7e864e Mon Sep 17 00:00:00 2001
 From: ycc738 <ycc738@andestech.com>
 Date: Tue, 21 Oct 2025 14:56:31 +0800
-Subject: [PATCH] add support to vwcmul and vrotate for complex number array
+Subject: [PATCH 2/3] add support to vwcmul and vrotate for complex number
+ array
 
 ---
  riscv/encoding.h        |  9 ++++++++

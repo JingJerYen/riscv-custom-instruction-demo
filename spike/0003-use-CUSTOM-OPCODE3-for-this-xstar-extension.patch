@@ -1,0 +1,37 @@
+From 9ecdd120506e4a10cc2744b0ac12d5c400b3aeed Mon Sep 17 00:00:00 2001
+From: ycc738 <ycc738@andestech.com>
+Date: Thu, 23 Oct 2025 16:53:55 +0800
+Subject: [PATCH 3/3] use CUSTOM OPCODE3 for this xstar extension
+
+---
+ riscv/encoding.h | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/riscv/encoding.h b/riscv/encoding.h
+index 29630e97..13932f6e 100644
+--- a/riscv/encoding.h
++++ b/riscv/encoding.h
+@@ -2307,9 +2307,9 @@
+ #define MASK_VSRA_VV 0xfc00707f
+ #define MATCH_VSRA_VX 0xa4004057
+ #define MASK_VSRA_VX 0xfc00707f
+-#define MATCH_VROTATE_VI 0xf8003057
++#define MATCH_VROTATE_VI 0xf800307b
+ #define MASK_VROTATE_VI 0xfc00707f
+-#define MATCH_VROTATE_VX 0xf8000057
++#define MATCH_VROTATE_VX 0xf800007b
+ #define MASK_VROTATE_VX 0xfc00707f
+ #define MATCH_VSRL_VI 0xa0003057
+ #define MASK_VSRL_VI 0xfc00707f
+@@ -2399,7 +2399,7 @@
+ #define MASK_VWMULU_VV 0xfc00707f
+ #define MATCH_VWMULU_VX 0xe0006057
+ #define MASK_VWMULU_VX 0xfc00707f
+-#define MATCH_VWCMUL_VV 0xe4002057
++#define MATCH_VWCMUL_VV 0xe400207b
+ #define MASK_VWCMUL_VV 0xfc00707f
+ #define MATCH_VWREDSUM_VS 0xc4000057
+ #define MASK_VWREDSUM_VS 0xfc00707f
+-- 
+2.49.0
+
