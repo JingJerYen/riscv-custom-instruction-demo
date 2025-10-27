@@ -1,20 +1,38 @@
-From 93eebaa3dcbde6e867586a6ce7836d2f871a1fb9 Mon Sep 17 00:00:00 2001
+From 3982a38675313b1276a15e8ca7a7427140d5edd7 Mon Sep 17 00:00:00 2001
 From: ycc738 <ycc738@andestech.com>
 Date: Thu, 23 Oct 2025 16:54:30 +0800
 Subject: [PATCH 3/3] use CUSTOM OPCODE3 for this xstar extension
 
+0. switch to CUSTOM OPCODE3
+1. users can only access builtin : __riscv_vrotate_rot90/180/270_v_...
+2. each of these intriniscs will be mapped to VROTATE_VI instruction
 ---
- clang/include/clang/Basic/riscv_vector.td     |  3 +--
- llvm/include/llvm/IR/IntrinsicsRISCV.td       |  1 +
- llvm/lib/Target/RISCV/RISCVInstrInfoV.td      | 20 ++++++++++++++-----
- .../Target/RISCV/RISCVInstrInfoVPseudos.td    | 13 ++++++++++--
- 4 files changed, 28 insertions(+), 9 deletions(-)
+ clang/include/clang/Basic/riscv_vector.td     | 11 ++--
+ llvm/include/llvm/IR/IntrinsicsRISCV.td       |  4 +-
+ llvm/lib/Target/RISCV/RISCVInstrInfoV.td      | 22 ++++---
+ .../Target/RISCV/RISCVInstrInfoVPseudos.td    | 64 ++++++++++++++++---
+ 4 files changed, 79 insertions(+), 22 deletions(-)
 
 diff --git a/clang/include/clang/Basic/riscv_vector.td b/clang/include/clang/Basic/riscv_vector.td
-index 62bb6cbb8..27d9c9f67 100644
+index 62bb6cbb8..ddeff205b 100644
 --- a/clang/include/clang/Basic/riscv_vector.td
 +++ b/clang/include/clang/Basic/riscv_vector.td
-@@ -1692,8 +1692,7 @@ defm vwmulsu : RVVOutOp0Op1BuiltinSet<"vwmulsu", "csi",
+@@ -1632,8 +1632,12 @@ defm vsrl : RVVUnsignedShiftBuiltinSet;
+ defm vsra : RVVSignedShiftBuiltinSet;
+ 
+ // Vector Rotate Instruction (immediate only)
+-defm vrotate : RVVOutOp1BuiltinSet<"vrotate", "csil",
+-                           [["vx", "v", "vvz"]]>;
++defm vrotate_rot90 : RVVOutBuiltinSet<"vrotate_rot90", "csil",
++                           [["v", "v", "vv"]]>;
++defm vrotate_rot180 : RVVOutBuiltinSet<"vrotate_rot180", "csil",
++                           [["v", "v", "vv"]]>;
++defm vrotate_rot270 : RVVOutBuiltinSet<"vrotate_rot270", "csil",
++                           [["v", "v", "vv"]]>;
+ 
+ // 12.7. Vector Narrowing Integer Right Shift Instructions
+ defm vnsrl : RVVUnsignedNShiftBuiltinSet;
+@@ -1692,8 +1696,7 @@ defm vwmulsu : RVVOutOp0Op1BuiltinSet<"vwmulsu", "csi",
                                        [["vv", "w", "wvUv"],
                                         ["vx", "w", "wvUe"]]>;
  defm vwcmul : RVVOutOp0Op1BuiltinSet<"vwcmul", "csi",
@@ -25,28 +43,33 @@ index 62bb6cbb8..27d9c9f67 100644
  
  // 12.13. Vector Single-Width Integer Multiply-Add Instructions
 diff --git a/llvm/include/llvm/IR/IntrinsicsRISCV.td b/llvm/include/llvm/IR/IntrinsicsRISCV.td
-index c01c5b44a..2a63c1f63 100644
+index c01c5b44a..136d50703 100644
 --- a/llvm/include/llvm/IR/IntrinsicsRISCV.td
 +++ b/llvm/include/llvm/IR/IntrinsicsRISCV.td
-@@ -1412,6 +1412,7 @@ let TargetPrefix = "riscv" in {
+@@ -1411,7 +1411,9 @@ let TargetPrefix = "riscv" in {
+   defm vsrl : RISCVBinaryAAShift;
    defm vsra : RISCVBinaryAAShift;
  
-   defm vrotate : RISCVBinaryAAShift;
-+  // defm vrotate_rot90 : RISCVUnaryAA;
+-  defm vrotate : RISCVBinaryAAShift;
++  defm vrotate_rot90 : RISCVUnaryAA;
++  defm vrotate_rot180 : RISCVUnaryAA;
++  defm vrotate_rot270 : RISCVUnaryAA;
  
    defm vnsrl : RISCVBinaryABShift;
    defm vnsra : RISCVBinaryABShift;
 diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoV.td b/llvm/lib/Target/RISCV/RISCVInstrInfoV.td
-index 1f7abdcd7..32637e66d 100644
+index 1f7abdcd7..6a34c1041 100644
 --- a/llvm/lib/Target/RISCV/RISCVInstrInfoV.td
 +++ b/llvm/lib/Target/RISCV/RISCVInstrInfoV.td
-@@ -799,10 +799,12 @@ multiclass VSHT_IV_V_X_I<string opcodestr, bits<6> funct6> {
- multiclass VCROTATE_IV_X_I<string opcodestr, bits<6> funct6> {
-   def X  : VALUVX<funct6, OPIVX, opcodestr # ".vx">,
-            Sched<[WriteVShiftX_WorstCase, ReadVShiftV_WorstCase,
+@@ -796,13 +796,11 @@ multiclass VSHT_IV_V_X_I<string opcodestr, bits<6> funct6> {
+                   ReadVMask]>;
+ }
+ 
+-multiclass VCROTATE_IV_X_I<string opcodestr, bits<6> funct6> {
+-  def X  : VALUVX<funct6, OPIVX, opcodestr # ".vx">,
+-           Sched<[WriteVShiftX_WorstCase, ReadVShiftV_WorstCase,
 -                  ReadVShiftX_WorstCase, ReadVMask]>;
-+                  ReadVShiftX_WorstCase, ReadVMask]>
-+          { let Inst{6-0} = OPC_CUSTOM_3.Value; }
++multiclass VCROTATE_IV_I<string opcodestr, bits<6> funct6> {
    def I  : VALUVI<funct6, opcodestr # ".vi", uimm5>,
             Sched<[WriteVShiftI_WorstCase, ReadVShiftV_WorstCase,
 -                  ReadVMask]>;
@@ -55,7 +78,7 @@ index 1f7abdcd7..32637e66d 100644
  }
  
  multiclass VNSHT_IV_V_X_I<string opcodestr, bits<6> funct6> {
-@@ -1163,8 +1165,6 @@ def : InstAlias<"vnot.v $vd, $vs",
+@@ -1163,8 +1161,6 @@ def : InstAlias<"vnot.v $vd, $vs",
  defm VSLL_V : VSHT_IV_V_X_I<"vsll", 0b100101>;
  defm VSRL_V : VSHT_IV_V_X_I<"vsrl", 0b101000>;
  defm VSRA_V : VSHT_IV_V_X_I<"vsra", 0b101001>;
@@ -64,7 +87,7 @@ index 1f7abdcd7..32637e66d 100644
  
  // Vector Narrowing Integer Right Shift Instructions
  // Refer to 11.3. Narrowing Vector Arithmetic Instructions
-@@ -1270,7 +1270,6 @@ let Constraints = "@earlyclobber $vd", RVVConstraint = WidenV in {
+@@ -1270,7 +1266,6 @@ let Constraints = "@earlyclobber $vd", RVVConstraint = WidenV in {
  defm VWMUL_V : VWMUL_MV_V_X<"vwmul", 0b111011>;
  defm VWMULU_V : VWMUL_MV_V_X<"vwmulu", 0b111000>;
  defm VWMULSU_V : VWMUL_MV_V_X<"vwmulsu", 0b111010>;
@@ -72,13 +95,13 @@ index 1f7abdcd7..32637e66d 100644
  } // Constraints = "@earlyclobber $vd", RVVConstraint = WidenV
  
  // Vector Single-Width Integer Multiply-Add Instructions
-@@ -1333,6 +1332,17 @@ defm VNCLIP_W : VNCLP_IV_V_X_I<"vnclip", 0b101111>;
+@@ -1333,6 +1328,17 @@ defm VNCLIP_W : VNCLP_IV_V_X_I<"vnclip", 0b101111>;
  } // Constraints = "@earlyclobber $vd"
  } // Predicates = [HasVInstructions]
  
 +let Predicates = [HasVendorXStar, HasVInstructions] in {
 +// Vector Rotate Instruction
-+defm VROTATE_V : VCROTATE_IV_X_I<"vrotate", 0b111110>;
++defm VROTATE_V : VCROTATE_IV_I<"vrotate", 0b111110>;
 +
 +let Constraints = "@earlyclobber $vd", RVVConstraint = WidenV in {
 +def VWCMUL_VV : VALUVV<0b111001, OPMVV, "vwcmul.vv">, Sched<[]> {
@@ -91,10 +114,28 @@ index 1f7abdcd7..32637e66d 100644
  // Vector Single-Width Floating-Point Add/Subtract Instructions
  let Uses = [FRM], mayRaiseFPException = true in {
 diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td b/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
-index 868ac1247..2d53c6898 100644
+index 868ac1247..e14c7d57d 100644
 --- a/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
 +++ b/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
-@@ -2988,6 +2988,13 @@ multiclass VPseudoVWMUL_VV_VX {
+@@ -2603,16 +2603,12 @@ multiclass VPseudoVSHT_VV_VX_VI<Operand ImmType = simm5, string Constraint = "">
+   }
+ }
+ 
+-multiclass VPseudoVCROTATE_VX_VI<Operand ImmType = simm5, string Constraint = ""> {
++multiclass VPseudoVCROTATE_VI<Operand ImmType = simm5, string Constraint = ""> {
+   foreach m = MxList in {
+     defvar mx = m.MX;
+-    defvar WriteVCRotateX_MX = !cast<SchedWrite>("WriteVShiftX_" # mx);
+     defvar WriteVCRotateI_MX = !cast<SchedWrite>("WriteVShiftI_" # mx);
+     defvar ReadVCRotateV_MX = !cast<SchedRead>("ReadVShiftV_" # mx);
+-    defvar ReadVCRotateX_MX = !cast<SchedRead>("ReadVShiftX_" # mx);
+ 
+-    defm "" : VPseudoBinaryV_VX<m, Constraint>,
+-              Sched<[WriteVCRotateX_MX, ReadVCRotateV_MX, ReadVCRotateX_MX, ReadVMask]>;
+     defm "" : VPseudoBinaryV_VI<ImmType, m, Constraint>,
+               Sched<[WriteVCRotateI_MX, ReadVCRotateV_MX, ReadVMask]>;
+   }
+@@ -2988,6 +2984,13 @@ multiclass VPseudoVWMUL_VV_VX {
    }
  }
  
@@ -108,7 +149,63 @@ index 868ac1247..2d53c6898 100644
  multiclass VPseudoVWMUL_VV_VF_RM {
    foreach m = MxListFW in {
      defvar mx = m.MX;
-@@ -6477,7 +6484,7 @@ defm PseudoVREM  : VPseudoVDIV_VV_VX;
+@@ -4828,6 +4831,46 @@ multiclass VPatUnaryV_M<string intrinsic, string instruction> {
+   }
+ }
+ 
++class VROTATEFLAGS<int idx, string name> {
++  int Index = idx;
++  string Name = name;
++}
++
++def VROTATE90: VROTATEFLAGS<1, "rot90">;
++def VROTATE180 : VROTATEFLAGS<2, "rot180">;
++def VROTATE270 : VROTATEFLAGS<3, "rot270">;
++
++multiclass VPatVROTATE<string intrinsic, string instruction, list<VTypeInfo> vtilist> {
++  foreach vrot = [VROTATE90, VROTATE180, VROTATE270] in {
++    foreach vti = vtilist in {
++      let Predicates = GetVTypePredicates<vti>.Predicates in {
++        // Unmasked
++        def : Pat<(vti.Vector (!cast<Intrinsic>(intrinsic#"_"#vrot.Name)
++                              (vti.Vector vti.RegClass:$merge),
++                              (vti.Vector vti.RegClass:$rs2),
++                              VLOpFrag)),
++                              (!cast<Instruction>(instruction#"_VI_"#vti.LMul.MX)
++                              (vti.Vector vti.RegClass:$merge),
++                              (vti.Vector vti.RegClass:$rs2),
++                              vrot.Index,
++                              GPR:$vl, vti.Log2SEW, TU_MU)>;
++        // Masked
++        def : Pat<(vti.Vector (!cast<Intrinsic>(intrinsic#"_"#vrot.Name#"_mask")
++                              (vti.Vector vti.RegClass:$merge),
++                              (vti.Vector vti.RegClass:$rs2),
++                              (vti.Mask V0),
++                              VLOpFrag, (XLenVT timm:$policy))),
++                              (!cast<Instruction>(instruction#"_VI_"#vti.LMul.MX#"_MASK")
++                              (vti.Vector vti.RegClass:$merge),
++                              (vti.Vector vti.RegClass:$rs2),
++                              vrot.Index,
++                              (vti.Mask V0),
++                              GPR:$vl, vti.Log2SEW, (XLenVT timm:$policy))>;
++      }
++    }
++  }
++}
++
+ multiclass VPatUnaryV_VF<string intrinsic, string instruction, string suffix,
+                          list<VTypeInfoToFraction> fractionList> {
+   foreach vtiTofti = fractionList in {
+@@ -6426,7 +6469,7 @@ defm PseudoVSLL : VPseudoVSHT_VV_VX_VI<uimm5>;
+ defm PseudoVSRL : VPseudoVSHT_VV_VX_VI<uimm5>;
+ defm PseudoVSRA : VPseudoVSHT_VV_VX_VI<uimm5>;
+ // Vector Rotate Instruction (immediate only)
+-defm PseudoVROTATE : VPseudoVCROTATE_VX_VI<uimm5>;
++defm PseudoVROTATE : VPseudoVCROTATE_VI<uimm5>;
+ 
+ 
+ //===----------------------------------------------------------------------===//
+@@ -6477,7 +6520,7 @@ defm PseudoVREM  : VPseudoVDIV_VV_VX;
  defm PseudoVWMUL   : VPseudoVWMUL_VV_VX;
  defm PseudoVWMULU  : VPseudoVWMUL_VV_VX;
  defm PseudoVWMULSU : VPseudoVWMUL_VV_VX;
@@ -117,7 +214,17 @@ index 868ac1247..2d53c6898 100644
  
  //===----------------------------------------------------------------------===//
  // 11.13. Vector Single-Width Integer Multiply-Add Instructions
-@@ -7127,7 +7134,9 @@ defm : VPatBinaryV_VV_VX<"int_riscv_vrem", "PseudoVREM", AllIntegerVectors, isSE
+@@ -7015,7 +7058,8 @@ defm : VPatBinaryV_VV_VX_VI<"int_riscv_vsrl", "PseudoVSRL", AllIntegerVectors,
+                             uimm5>;
+ defm : VPatBinaryV_VV_VX_VI<"int_riscv_vsra", "PseudoVSRA", AllIntegerVectors,
+                             uimm5>;
+-defm : VPatBinaryV_VX_VI<"int_riscv_vrotate", "PseudoVROTATE", AllIntegerVectors>;
++defm : VPatVROTATE<"int_riscv_vrotate", "PseudoVROTATE", AllIntegerVectors>;
++
+ 
+ foreach vti = AllIntegerVectors in {
+   // Emit shift by 1 as an add since it might be faster.
+@@ -7127,7 +7171,9 @@ defm : VPatBinaryV_VV_VX<"int_riscv_vrem", "PseudoVREM", AllIntegerVectors, isSE
  defm : VPatBinaryW_VV_VX<"int_riscv_vwmul", "PseudoVWMUL", AllWidenableIntVectors>;
  defm : VPatBinaryW_VV_VX<"int_riscv_vwmulu", "PseudoVWMULU", AllWidenableIntVectors>;
  defm : VPatBinaryW_VV_VX<"int_riscv_vwmulsu", "PseudoVWMULSU", AllWidenableIntVectors>;

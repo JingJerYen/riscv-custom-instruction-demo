@@ -1,17 +1,20 @@
-From 9ecdd120506e4a10cc2744b0ac12d5c400b3aeed Mon Sep 17 00:00:00 2001
+From 703899286b962badac16973e728069a1029e3327 Mon Sep 17 00:00:00 2001
 From: ycc738 <ycc738@andestech.com>
 Date: Thu, 23 Oct 2025 16:53:55 +0800
 Subject: [PATCH 3/3] use CUSTOM OPCODE3 for this xstar extension
 
+0. use OPCODE3
+1. remove vrotate.vx
 ---
- riscv/encoding.h | 6 +++---
- 1 file changed, 3 insertions(+), 3 deletions(-)
+ riscv/encoding.h  | 7 ++-----
+ riscv/riscv.mk.in | 1 -
+ 2 files changed, 2 insertions(+), 6 deletions(-)
 
 diff --git a/riscv/encoding.h b/riscv/encoding.h
-index 29630e97..13932f6e 100644
+index 29630e97..86987770 100644
 --- a/riscv/encoding.h
 +++ b/riscv/encoding.h
-@@ -2307,9 +2307,9 @@
+@@ -2307,10 +2307,8 @@
  #define MASK_VSRA_VV 0xfc00707f
  #define MATCH_VSRA_VX 0xa4004057
  #define MASK_VSRA_VX 0xfc00707f
@@ -19,11 +22,11 @@ index 29630e97..13932f6e 100644
 +#define MATCH_VROTATE_VI 0xf800307b
  #define MASK_VROTATE_VI 0xfc00707f
 -#define MATCH_VROTATE_VX 0xf8000057
-+#define MATCH_VROTATE_VX 0xf800007b
- #define MASK_VROTATE_VX 0xfc00707f
+-#define MASK_VROTATE_VX 0xfc00707f
  #define MATCH_VSRL_VI 0xa0003057
  #define MASK_VSRL_VI 0xfc00707f
-@@ -2399,7 +2399,7 @@
+ #define MATCH_VSRL_VV 0xa0000057
+@@ -2399,7 +2397,7 @@
  #define MASK_VWMULU_VV 0xfc00707f
  #define MATCH_VWMULU_VX 0xe0006057
  #define MASK_VWMULU_VX 0xfc00707f
@@ -32,6 +35,26 @@ index 29630e97..13932f6e 100644
  #define MASK_VWCMUL_VV 0xfc00707f
  #define MATCH_VWREDSUM_VS 0xc4000057
  #define MASK_VWREDSUM_VS 0xfc00707f
+@@ -3940,7 +3938,6 @@ DECLARE_INSN(vsra_vi, MATCH_VSRA_VI, MASK_VSRA_VI)
+ DECLARE_INSN(vsra_vv, MATCH_VSRA_VV, MASK_VSRA_VV)
+ DECLARE_INSN(vsra_vx, MATCH_VSRA_VX, MASK_VSRA_VX)
+ DECLARE_INSN(vrotate_vi, MATCH_VROTATE_VI, MASK_VROTATE_VI)
+-DECLARE_INSN(vrotate_vx, MATCH_VROTATE_VX, MASK_VROTATE_VX)
+ DECLARE_INSN(vsrl_vi, MATCH_VSRL_VI, MASK_VSRL_VI)
+ DECLARE_INSN(vsrl_vv, MATCH_VSRL_VV, MASK_VSRL_VV)
+ DECLARE_INSN(vsrl_vx, MATCH_VSRL_VX, MASK_VSRL_VX)
+diff --git a/riscv/riscv.mk.in b/riscv/riscv.mk.in
+index 8e019ab3..9a5c377d 100644
+--- a/riscv/riscv.mk.in
++++ b/riscv/riscv.mk.in
+@@ -641,7 +641,6 @@ riscv_insn_ext_v_alu_int = \
+ 	vsra_vv \
+ 	vsra_vx \
+ 	vrotate_vi \
+-	vrotate_vx \
+ 	vsrl_vi \
+ 	vsrl_vv \
+ 	vsrl_vx \
 -- 
 2.49.0
 
