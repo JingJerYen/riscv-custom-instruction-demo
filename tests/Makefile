@@ -1,15 +1,14 @@
-CC	:= clang
-CFLAGS	:= --target=riscv32 -march=rv32imac_xstar -O0
-RVCC	:= /usr/bin/riscv64-elf-gcc
-SPIKE	:= 
-PK32	:=
+CC	:= /path/to/llvm-project/build/bin/clang-17
+CFLAGS	:= --target=riscv32 -march=rv32imac_xstar_zve32x -O0
+SPIKE	:= /path/to/riscv-isa-sim/build/spike
+PK32	:= /path/to/riscv-pk/build32/pk
 
 # === Files ===
 SRC     := $(wildcard *.c)
 OBJS    := $(SRC:.c=.o)
 ASMS	:= $(SRC:.c=.s)
 LLVMIRS	:= $(SRC:.c=.ll)
-EXES	:= $(SRC:.c=.exe)
+EXES	:= $(SRC:.c=)
 
 # === Rules ===
 
@@ -24,11 +23,11 @@ all:	$(ASMS) $(OBJS)	$(LLVMIRS) $(EXES)
 %.ll: %.c
 	$(CC) $(CFLAGS) -S -emit-llvm $< -o $@
 
-%.exe: %.o
-	$(RVCC) -march=rv32imac -mabi=ilp32 $< -o $@		
+%: %.o
+	$(CC) -march=rv32imac_zicsr_zve32x -mabi=ilp32 $< -o $@
 
-#run_%: %.exe
-#	$(SPIKE) --isa=rv32imac_xstar $(PK32) $<
+run-%: %
+	$(SPIKE) --isa=rv32imacv_xstar $(PK32) $<
 
 clean:
-	rm -f *.o *.s *.ll *.exe
+	rm -f *.o *.s *.ll $(EXES)
