@@ -16,6 +16,7 @@ The `xstar` extension includes:
 ### Vector Instructions
 - `vwcmul.vv` - Widening complex multiply for complex number arrays
 - `vrotate.vi` - Rotate complex numbers by 90/180/270 degrees
+- `vcmla.vv` - Multiply-Add complex float numbers and rotate by 90/180/270 degrees, similar to Aarch64 `VCMLA`
 
 ## Builtin Functions
 
@@ -37,6 +38,44 @@ Widening complex multiply for complex number arrays. Multiplies two vectors of `
 vint16m1_t __riscv_vrotate_rot90_v_i16m1(vint16m1_t va, size_t vl)
 ```
 Rotate complex numbers by 90 degrees: `(a + bi) → (-b + ai)`
+
+```c
+vfloat32m2_t __riscv_vcmla_vv_f32m2(vfloat32m2_t vd, vfloat32m2_t va, vfloat32m2_t vb, size_t vl)
+vfloat32m2_t __riscv_vcmla_rot90_vv_f32m2(vfloat32m2_t vd, vfloat32m2_t va, vfloat32m2_t vb, size_t vl)
+vfloat32m2_t __riscv_vcmla_rot180_vv_f32m2(vfloat32m2_t vd, vfloat32m2_t va, vfloat32m2_t vb, size_t vl)
+vfloat32m2_t __riscv_vcmla_rot270_vv_f32m2(vfloat32m2_t vd, vfloat32m2_t va, vfloat32m2_t vb, size_t vl)
+```
+Complex multiply-add with rotation for floating-point complex numbers. Similar to Aarch64 `VCMLA` instruction. The operation performs:
+- `vcmla`: `vd = vd + (va * vb)` where complex multiplication gives `(a+bi)*(c+di) = (ac-bd) + (ad+bc)i`
+- `vcmla_rot90`: Rotate `vb` by 90° before multiply: `vd = vd + (va * (vb rotated 90°))`
+- `vcmla_rot180`: Rotate `vb` by 180° before multiply: `vd = vd + (va * (vb rotated 180°))`
+- `vcmla_rot270`: Rotate `vb` by 270° before multiply: `vd = vd + (va * (vb rotated 270°))`
+
+Complex numbers are stored in interleaved format: `[real0, imag0, real1, imag1, ...]`
+
+### Usage Example
+
+```c
+#include <riscv_vector.h>
+
+// Complex arrays: [real, imag, real, imag, ...]
+float a[] = {1.0, 2.0, 3.0, 4.0};  // (1+2i), (3+4i)
+float b[] = {5.0, 6.0, 7.0, 8.0};  // (5+6i), (7+8i)
+float result[4] = {0.0};
+
+size_t vl = __riscv_vsetvl_e32m2(4);
+vfloat32m2_t va = __riscv_vle32_v_f32m2(a, vl);
+vfloat32m2_t vb = __riscv_vle32_v_f32m2(b, vl);
+vfloat32m2_t vd = __riscv_vle32_v_f32m2(result, vl);
+
+// Perform complex multiply-add: result = result + (a * b)
+vd = __riscv_vcmla_vv_f32m2(vd, va, vb, vl);
+
+// With 90° rotation: result = result + (a * (b rotated 90°))
+vd = __riscv_vcmla_rot90_vv_f32m2(vd, va, vb, vl);
+
+__riscv_vse32_v_f32m2(result, vd, vl);
+```
 
 ## Project Structure
 

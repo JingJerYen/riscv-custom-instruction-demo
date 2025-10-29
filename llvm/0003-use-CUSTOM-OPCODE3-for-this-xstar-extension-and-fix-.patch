@@ -1,9 +1,9 @@
-From 3982a38675313b1276a15e8ca7a7427140d5edd7 Mon Sep 17 00:00:00 2001
+From e7b3222d9c57d10a50936f68091fb96dffd2f264 Mon Sep 17 00:00:00 2001
 From: ycc738 <ycc738@andestech.com>
 Date: Thu, 23 Oct 2025 16:54:30 +0800
-Subject: [PATCH 3/4] use CUSTOM OPCODE3 for this xstar extension
+Subject: [PATCH 3/3] use CUSTOM OPCODE3 for this xstar extension, and fix
+ rotation intrinisic
 
-0. switch to CUSTOM OPCODE3
 1. users can only access builtin : __riscv_vrotate_rot90/180/270_v_...
 2. each of these intriniscs will be mapped to VROTATE_VI instruction
 ---

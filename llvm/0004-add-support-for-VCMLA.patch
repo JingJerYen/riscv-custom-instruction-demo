@@ -1,0 +1,381 @@
+From f79071a9dfa270e13ca13722ddcb69adf7392a62 Mon Sep 17 00:00:00 2001
+From: ycc738 <ycc738@andestech.com>
+Date: Tue, 28 Oct 2025 14:57:59 +0800
+Subject: [PATCH 4/4] add support for VCMLA
+
+---
+ clang/include/clang/Basic/riscv_vector.td     |  14 ++
+ llvm/include/llvm/IR/IntrinsicsRISCV.td       |   3 +
+ llvm/lib/Target/RISCV/RISCVInstrInfoV.td      |  37 ++++
+ .../Target/RISCV/RISCVInstrInfoVPseudos.td    | 177 ++++++++++++++++++
+ 4 files changed, 231 insertions(+)
+
+diff --git a/clang/include/clang/Basic/riscv_vector.td b/clang/include/clang/Basic/riscv_vector.td
+index ddeff205b..f0a26e560 100644
+--- a/clang/include/clang/Basic/riscv_vector.td
++++ b/clang/include/clang/Basic/riscv_vector.td
+@@ -216,6 +216,14 @@ let HasMaskedOffOperand = false in {
+                                   [["vv", "v", "vvvvu"],
+                                    ["vf", "v", "vvevu"]]>;
+   }
++  multiclass RVVFloatingVCMLABuiltinSet {
++    defm "" : RVVOutOp1BuiltinSet<NAME, "xfd",
++                                  [["vv", "v", "vvvv"]]>;
++  }
++  multiclass RVVFloatingVCMLABuiltinSetRoundingMode {
++    defm "" : RVVOutOp1BuiltinSet<NAME, "xfd",
++                                  [["vv", "v", "vvvvu"]]>;
++  }
+ }
+ 
+ let HasMaskedOffOperand = false, Log2LMUL = [-2, -1, 0, 1, 2] in {
+@@ -2077,6 +2085,9 @@ let ManualCodegen = [{
+     defm vfnmadd : RVVFloatingTerBuiltinSetRoundingMode;
+     defm vfmsub  : RVVFloatingTerBuiltinSetRoundingMode;
+     defm vfnmsub : RVVFloatingTerBuiltinSetRoundingMode;
++    defm vcmla_rot90  : RVVFloatingVCMLABuiltinSetRoundingMode;
++    defm vcmla_rot180  : RVVFloatingVCMLABuiltinSetRoundingMode;
++    defm vcmla_rot270  : RVVFloatingVCMLABuiltinSetRoundingMode;
+   }
+   // 14.6. Vector Single-Width Floating-Point Fused Multiply-Add Instructions
+   defm vfmacc  : RVVFloatingTerBuiltinSet;
+@@ -2087,6 +2098,9 @@ let ManualCodegen = [{
+   defm vfnmadd : RVVFloatingTerBuiltinSet;
+   defm vfmsub  : RVVFloatingTerBuiltinSet;
+   defm vfnmsub : RVVFloatingTerBuiltinSet;
++  defm vcmla_rot90  : RVVFloatingVCMLABuiltinSet;
++  defm vcmla_rot180  : RVVFloatingVCMLABuiltinSet;
++  defm vcmla_rot270  : RVVFloatingVCMLABuiltinSet;
+ }
+ 
+ let ManualCodegen = [{
+diff --git a/llvm/include/llvm/IR/IntrinsicsRISCV.td b/llvm/include/llvm/IR/IntrinsicsRISCV.td
+index 136d50703..3a2342d48 100644
+--- a/llvm/include/llvm/IR/IntrinsicsRISCV.td
++++ b/llvm/include/llvm/IR/IntrinsicsRISCV.td
+@@ -1531,6 +1531,9 @@ let TargetPrefix = "riscv" in {
+ 
+   defm vfwmul : RISCVBinaryABXRoundingMode;
+ 
++  defm vcmla_rot90 :  RISCVTernaryAAXARoundingMode;
++  defm vcmla_rot180 : RISCVTernaryAAXARoundingMode;
++  defm vcmla_rot270 : RISCVTernaryAAXARoundingMode;
+   defm vfmacc : RISCVTernaryAAXARoundingMode;
+   defm vfnmacc : RISCVTernaryAAXARoundingMode;
+   defm vfmsac : RISCVTernaryAAXARoundingMode;
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoV.td b/llvm/lib/Target/RISCV/RISCVInstrInfoV.td
+index 6a34c1041..eaef20fdc 100644
+--- a/llvm/lib/Target/RISCV/RISCVInstrInfoV.td
++++ b/llvm/lib/Target/RISCV/RISCVInstrInfoV.td
+@@ -1328,6 +1328,39 @@ defm VNCLIP_W : VNCLP_IV_V_X_I<"vnclip", 0b101111>;
+ } // Constraints = "@earlyclobber $vd"
+ } // Predicates = [HasVInstructions]
+ 
++
++class RVInstVVI<bits<4> funct4, RISCVVFormat opv, dag outs, dag ins,
++               string opcodestr, string argstr>
++    : RVInst<outs, ins, opcodestr, argstr, [], InstFormatR> {
++  bits<5> vs2;
++  bits<5> vs1;
++  bits<5> vd;
++  bit vm;
++  bits<2> imm2;
++
++  let Inst{31-28} = funct4;
++  let Inst{27-26} = imm2;
++  let Inst{25} = vm;
++  let Inst{24-20} = vs2;
++  let Inst{19-15} = vs1;
++  let Inst{14-12} = opv.Value;
++  let Inst{11-7} = vd;
++  let Inst{6-0} = OPC_OP_V.Value;
++
++  let Uses = [VTYPE, VL];
++  let RVVConstraint = VMConstraint;
++}
++
++
++let hasSideEffects = 0, mayLoad = 0, mayStore = 0 in {
++// op vd, vs2, vs1, imm2, vm
++class VALUVVI<bits<4> funct4, RISCVVFormat opv, string opcodestr>
++    : RVInstVVI<funct4, opv, (outs VR:$vd),
++                (ins VR:$vs2, VR:$vs1, uimm2:$imm2, VMaskOp:$vm),
++                opcodestr, "$vd, $vs2, $vs1 $imm2$vm">;
++}
++
++
+ let Predicates = [HasVendorXStar, HasVInstructions] in {
+ // Vector Rotate Instruction
+ defm VROTATE_V : VCROTATE_IV_I<"vrotate", 0b111110>;
+@@ -1336,6 +1369,10 @@ let Constraints = "@earlyclobber $vd", RVVConstraint = WidenV in {
+ def VWCMUL_VV : VALUVV<0b111001, OPMVV, "vwcmul.vv">, Sched<[]> {
+   let Inst{6-0} = OPC_CUSTOM_3.Value;
+ }
++
++def VCMLA_VV : VALUVVI<0b1111, OPFVV, "vcmla.vv">, Sched<[]> {
++  let Inst{6-0} = OPC_CUSTOM_3.Value;
++}
+ } // Constraints = "@earlyclobber $vd", RVVConstraint = WidenV
+ } // Predicates = [HasVendorXStar, HasVInstructions]
+ 
+diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td b/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
+index e14c7d57d..9efa01eaf 100644
+--- a/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
++++ b/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
+@@ -1148,6 +1148,29 @@ class VPseudoBinaryNoMaskRoundingMode<VReg RetClass,
+   let UsesVXRM = UsesVXRM_;
+ }
+ 
++class VPseudoVCMLAMaskPolicyRoundingMode<VReg RetClass,
++                                          RegisterClass Op1Class,
++                                          DAGOperand Op2Class,
++                                          string Constraint,
++                                          int UsesVXRM_> :
++        Pseudo<(outs GetVRegNoV0<RetClass>.R:$rd),
++                (ins GetVRegNoV0<RetClass>.R:$merge,
++                     Op1Class:$rs2, Op2Class:$rs1,
++                     uimm2:$imm2,
++                     VMaskOp:$vm, ixlenimm:$rm, AVL:$vl,
++                     ixlenimm:$sew, ixlenimm:$policy), []>,
++        RISCVVPseudo {
++  let mayLoad = 0;
++  let mayStore = 0;
++  let Constraints = !interleave([Constraint, "$rd = $merge"], ",");
++  let HasVLOp = 1;
++  let HasSEWOp = 1;
++  let HasVecPolicyOp = 1;
++  let UsesMaskPolicy = 1;
++  let HasRoundModeOp = 1;
++  let UsesVXRM = UsesVXRM_;
++}
++
+ class VPseudoBinaryMaskPolicyRoundingMode<VReg RetClass,
+                                           RegisterClass Op1Class,
+                                           DAGOperand Op2Class,
+@@ -1493,6 +1516,26 @@ class VPseudoTernaryNoMaskWithPolicyRoundingMode<VReg RetClass,
+   let UsesVXRM = 0;
+ }
+ 
++class VPseudoVCMLANoMaskWithPolicyRoundingMode<VReg RetClass,
++                                                 RegisterClass Op1Class,
++                                                 DAGOperand Op2Class,
++                                                 string Constraint> :
++        Pseudo<(outs RetClass:$rd),
++               (ins RetClass:$rs3, Op1Class:$rs1, Op2Class:$rs2, uimm2:$imm2,
++                    ixlenimm:$rm, AVL:$vl, ixlenimm:$sew, ixlenimm:$policy),
++               []>,
++        RISCVVPseudo {
++  let mayLoad = 0;
++  let mayStore = 0;
++  let hasSideEffects = 0;
++  let Constraints = !interleave([Constraint, "$rd = $rs3"], ",");
++  let HasVecPolicyOp = 1;
++  let HasVLOp = 1;
++  let HasSEWOp = 1;
++  let HasRoundModeOp = 1;
++  let UsesVXRM = 0;
++}
++
+ class VPseudoUSSegLoadNoMask<VReg RetClass, int EEW, bits<4> NF>:
+       Pseudo<(outs RetClass:$rd),
+              (ins RetClass:$dest, GPRMem:$rs1, AVL:$vl,
+@@ -3300,6 +3343,25 @@ multiclass VPseudoTernaryWithPolicyRoundingMode<VReg RetClass,
+   }
+ }
+ 
++multiclass VPseudoVCMLAWithPolicyRoundingMode<VReg RetClass,
++                                                RegisterClass Op1Class,
++                                                DAGOperand Op2Class,
++                                                LMULInfo MInfo,
++                                                string Constraint = "",
++                                                bit Commutable = 0> {
++  let VLMul = MInfo.value in {
++    let isCommutable = Commutable in
++    def "_" # MInfo.MX :
++        VPseudoVCMLANoMaskWithPolicyRoundingMode<RetClass, Op1Class,
++                                                   Op2Class, Constraint>;
++    def "_" # MInfo.MX # "_MASK" :
++        VPseudoVCMLAMaskPolicyRoundingMode<RetClass, Op1Class,
++                                            Op2Class, Constraint,
++                                            UsesVXRM_=0>,
++                                   RISCVMaskedPseudo<MaskIdx=3>;
++  }
++}
++
+ multiclass VPseudoTernaryV_VV_AAXA<LMULInfo m, string Constraint = ""> {
+   defm _VV : VPseudoTernaryWithPolicy<m.vrclass, m.vrclass, m.vrclass, m,
+                                       Constraint, Commutable=1>;
+@@ -3310,6 +3372,11 @@ multiclass VPseudoTernaryV_VV_AAXA_RM<LMULInfo m, string Constraint = ""> {
+                                                   Constraint, Commutable=1>;
+ }
+ 
++multiclass VPseudoVCMLAV_VV_AAXA_RM<LMULInfo m, string Constraint = ""> {
++  defm _VV : VPseudoVCMLAWithPolicyRoundingMode<m.vrclass, m.vrclass, m.vrclass, m,
++                                                  Constraint, Commutable=1>;
++}
++
+ multiclass VPseudoTernaryV_VX_AAXA<LMULInfo m, string Constraint = ""> {
+   defm "_VX" : VPseudoTernaryWithPolicy<m.vrclass, GPR, m.vrclass, m,
+                                         Constraint, Commutable=1>;
+@@ -3440,6 +3507,17 @@ multiclass VPseudoVMAC_VV_VF_AAXA_RM<string Constraint = ""> {
+   }
+ }
+ 
++multiclass VPseudoVCMLA_VV_AAXA_RM<string Constraint = ""> {
++  foreach m = MxListF in {
++    defvar mx = m.MX;
++    defvar WriteVFMulAddV_MX = !cast<SchedWrite>("WriteVFMulAddV_" # mx);
++    defvar ReadVFMulAddV_MX = !cast<SchedRead>("ReadVFMulAddV_" # mx);
++
++    defm "" : VPseudoVCMLAV_VV_AAXA_RM<m, Constraint>,
++              Sched<[WriteVFMulAddV_MX, ReadVFMulAddV_MX, ReadVFMulAddV_MX, ReadVFMulAddV_MX, ReadVMask]>;
++  }
++}
++
+ multiclass VPseudoVSLD_VX_VI<Operand ImmType = simm5, string Constraint = ""> {
+   foreach m = MxList in {
+     defvar mx = m.MX;
+@@ -4659,6 +4737,32 @@ class VPatTernaryNoMaskWithPolicyRoundingMode<string intrinsic,
+                     (XLenVT timm:$round),
+                     GPR:$vl, sew, (XLenVT timm:$policy))>;
+ 
++class VPatTernaryVCMLANoMaskWithPolicyRoundingMode<string intrinsic,
++                                  string inst,
++                                  string kind,
++                                  ValueType result_type,
++                                  ValueType op1_type,
++                                  ValueType op2_type,
++                                  int sew,
++                                  LMULInfo vlmul,
++                                  VReg result_reg_class,
++                                  RegisterClass op1_reg_class,
++                                  DAGOperand op2_kind,
++                                  int vrot_index> :
++  Pat<(result_type (!cast<Intrinsic>(intrinsic)
++                    (result_type result_reg_class:$rs3),
++                    (op1_type op1_reg_class:$rs1),
++                    (op2_type op2_kind:$rs2),
++                    (XLenVT timm:$round),
++                    VLOpFrag, (XLenVT timm:$policy))),
++                   (!cast<Instruction>(inst#"_"#kind#"_"#vlmul.MX)
++                    result_reg_class:$rs3,
++                    (op1_type op1_reg_class:$rs1),
++                    op2_kind:$rs2,
++                    vrot_index,
++                    (XLenVT timm:$round),
++                    GPR:$vl, sew, (XLenVT timm:$policy))>;
++
+ class VPatTernaryMask<string intrinsic,
+                       string inst,
+                       string kind,
+@@ -4736,6 +4840,35 @@ class VPatTernaryMaskPolicyRoundingMode<string intrinsic,
+                     (XLenVT timm:$round),
+                     GPR:$vl, sew, (XLenVT timm:$policy))>;
+ 
++class VPatTernaryVCMLAMaskPolicyRoundingMode<string intrinsic,
++                                        string inst,
++                                        string kind,
++                                        ValueType result_type,
++                                        ValueType op1_type,
++                                        ValueType op2_type,
++                                        ValueType mask_type,
++                                        int sew,
++                                        LMULInfo vlmul,
++                                        VReg result_reg_class,
++                                        RegisterClass op1_reg_class,
++                                        DAGOperand op2_kind,
++                                        int vrot_index> :
++  Pat<(result_type (!cast<Intrinsic>(intrinsic#"_mask")
++                    (result_type result_reg_class:$rs3),
++                    (op1_type op1_reg_class:$rs1),
++                    (op2_type op2_kind:$rs2),
++                    (mask_type V0),
++                    (XLenVT timm:$round),
++                    VLOpFrag, (XLenVT timm:$policy))),
++                   (!cast<Instruction>(inst#"_"#kind#"_"#vlmul.MX # "_MASK")
++                    result_reg_class:$rs3,
++                    (op1_type op1_reg_class:$rs1),
++                    op2_kind:$rs2,
++                    vrot_index,
++                    (mask_type V0),
++                    (XLenVT timm:$round),
++                    GPR:$vl, sew, (XLenVT timm:$policy))>;
++
+ class VPatTernaryMaskTA<string intrinsic,
+                         string inst,
+                         string kind,
+@@ -5781,6 +5914,31 @@ multiclass VPatTernaryWithPolicyRoundingMode<string intrinsic,
+                                                 op2_kind>;
+ }
+ 
++multiclass VPatTernaryVCMLAWithPolicyRoundingMode<string intrinsic,
++                                             string inst,
++                                             string kind,
++                                             ValueType result_type,
++                                             ValueType op1_type,
++                                             ValueType op2_type,
++                                             ValueType mask_type,
++                                             int sew,
++                                             LMULInfo vlmul,
++                                             VReg result_reg_class,
++                                             RegisterClass op1_reg_class,
++                                             DAGOperand op2_kind,
++                                             int vrot_index> {
++  def : VPatTernaryVCMLANoMaskWithPolicyRoundingMode<intrinsic, inst, kind, result_type,
++                                                op1_type, op2_type, sew, vlmul,
++                                                result_reg_class, op1_reg_class,
++                                                op2_kind, vrot_index>;
++  def : VPatTernaryVCMLAMaskPolicyRoundingMode<intrinsic, inst, kind, result_type, op1_type,
++                                                op2_type, mask_type, sew, vlmul,
++                                                result_reg_class, op1_reg_class,
++                                                op2_kind, vrot_index>;
++}
++
++
++
+ multiclass VPatTernaryTA<string intrinsic,
+                          string inst,
+                          string kind,
+@@ -5841,6 +5999,22 @@ multiclass VPatTernaryV_VV_AAXA_RM<string intrinsic, string instruction,
+                                              vti.RegClass, vti.RegClass>;
+ }
+ 
++
++
++multiclass VPatTernary_VCMLA<string intrinsic, string instruction,
++                                list<VTypeInfo> vtilist> {
++
++  foreach vrot = [VROTATE90, VROTATE180, VROTATE270] in {
++    foreach vti = vtilist in {
++      let Predicates = GetVTypePredicates<vti>.Predicates in
++      defm : VPatTernaryVCMLAWithPolicyRoundingMode<intrinsic#"_"#vrot.Name, instruction, "VV",
++                                              vti.Vector, vti.Vector, vti.Vector, vti.Mask,
++                                              vti.Log2SEW, vti.LMul, vti.RegClass,
++                                              vti.RegClass, vti.RegClass, vrot.Index>;
++    }
++  }
++}
++
+ multiclass VPatTernaryV_VX<string intrinsic, string instruction,
+                            list<VTypeInfo> vtilist> {
+   foreach vti = vtilist in
+@@ -6645,6 +6819,8 @@ defm PseudoVFMADD  : VPseudoVMAC_VV_VF_AAXA_RM;
+ defm PseudoVFNMADD : VPseudoVMAC_VV_VF_AAXA_RM;
+ defm PseudoVFMSUB  : VPseudoVMAC_VV_VF_AAXA_RM;
+ defm PseudoVFNMSUB : VPseudoVMAC_VV_VF_AAXA_RM;
++
++defm PseudoVCMLA  : VPseudoVCMLA_VV_AAXA_RM;
+ }
+ 
+ //===----------------------------------------------------------------------===//
+@@ -7313,6 +7489,7 @@ defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfmadd", "PseudoVFMADD", AllFloatVe
+ defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfnmadd", "PseudoVFNMADD", AllFloatVectors>;
+ defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfmsub", "PseudoVFMSUB", AllFloatVectors>;
+ defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfnmsub", "PseudoVFNMSUB", AllFloatVectors>;
++defm : VPatTernary_VCMLA<"int_riscv_vcmla", "PseudoVCMLA", AllFloatVectors>;
+ 
+ //===----------------------------------------------------------------------===//
+ // 13.7. Vector Widening Floating-Point Fused Multiply-Add Instructions
+-- 
+2.49.0
+

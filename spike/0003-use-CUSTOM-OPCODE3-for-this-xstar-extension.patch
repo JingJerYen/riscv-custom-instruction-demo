@@ -1,7 +1,7 @@
 From 703899286b962badac16973e728069a1029e3327 Mon Sep 17 00:00:00 2001
 From: ycc738 <ycc738@andestech.com>
 Date: Thu, 23 Oct 2025 16:53:55 +0800
-Subject: [PATCH 3/3] use CUSTOM OPCODE3 for this xstar extension
+Subject: [PATCH 3/4] use CUSTOM OPCODE3 for this xstar extension
 
 0. use OPCODE3
 1. remove vrotate.vx

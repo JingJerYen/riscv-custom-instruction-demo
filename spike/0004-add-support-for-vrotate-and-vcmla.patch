@@ -1,0 +1,234 @@
+From 3b0bc02b9c8f0b6be6f039e4cff3ea9a05f365fc Mon Sep 17 00:00:00 2001
+From: ycc738 <ycc738@andestech.com>
+Date: Wed, 29 Oct 2025 15:22:56 +0800
+Subject: [PATCH 4/4] add support for vrotate and vcmla
+
+---
+ riscv/encoding.h         |   3 +
+ riscv/insns/vcmla_vv.h   | 126 +++++++++++++++++++++++++++++++++++++++
+ riscv/insns/vrotate_vi.h |  46 ++++++++++++++
+ riscv/riscv.mk.in        |   1 +
+ 4 files changed, 176 insertions(+)
+ create mode 100644 riscv/insns/vcmla_vv.h
+ create mode 100644 riscv/insns/vrotate_vi.h
+
+diff --git a/riscv/encoding.h b/riscv/encoding.h
+index 86987770..57ba375c 100644
+--- a/riscv/encoding.h
++++ b/riscv/encoding.h
+@@ -1697,6 +1697,8 @@
+ #define MASK_VFMACC_VF 0xfc00707f
+ #define MATCH_VFMACC_VV 0xb0001057
+ #define MASK_VFMACC_VV 0xfc00707f
++#define MATCH_VCMLA_VV 0xf000107b
++#define MASK_VCMLA_VV 0xf000707f
+ #define MATCH_VFMADD_VF 0xa0005057
+ #define MASK_VFMADD_VF 0xfc00707f
+ #define MATCH_VFMADD_VV 0xa0001057
+@@ -3630,6 +3632,7 @@ DECLARE_INSN(vfcvt_xu_f_v, MATCH_VFCVT_XU_F_V, MASK_VFCVT_XU_F_V)
+ DECLARE_INSN(vfdiv_vf, MATCH_VFDIV_VF, MASK_VFDIV_VF)
+ DECLARE_INSN(vfdiv_vv, MATCH_VFDIV_VV, MASK_VFDIV_VV)
+ DECLARE_INSN(vfirst_m, MATCH_VFIRST_M, MASK_VFIRST_M)
++DECLARE_INSN(vcmla_vv, MATCH_VCMLA_VV, MASK_VCMLA_VV)
+ DECLARE_INSN(vfmacc_vf, MATCH_VFMACC_VF, MASK_VFMACC_VF)
+ DECLARE_INSN(vfmacc_vv, MATCH_VFMACC_VV, MASK_VFMACC_VV)
+ DECLARE_INSN(vfmadd_vf, MATCH_VFMADD_VF, MASK_VFMADD_VF)
+diff --git a/riscv/insns/vcmla_vv.h b/riscv/insns/vcmla_vv.h
+new file mode 100644
+index 00000000..b2c1f6b3
+--- /dev/null
++++ b/riscv/insns/vcmla_vv.h
+@@ -0,0 +1,126 @@
++VI_VFP_VV_LOOP
++({
++  // f16 version
++  if ((i & 1) == 0) {
++    // Process even index - compute both real and imaginary parts for the pair
++    uint64_t pair_idx = i;
++    float16_t a = P.VU.elt<float16_t>(rs2_num, pair_idx);      // real part from vs2
++    float16_t b = P.VU.elt<float16_t>(rs2_num, pair_idx + 1);  // imaginary part from vs2
++    float16_t c = P.VU.elt<float16_t>(rs1_num, pair_idx);      // real part from vs1
++    float16_t d = P.VU.elt<float16_t>(rs1_num, pair_idx + 1);  // imaginary part from vs1
++    float16_t acc_real = P.VU.elt<float16_t>(rd_num, pair_idx);
++    float16_t acc_imag = P.VU.elt<float16_t>(rd_num, pair_idx + 1);
++
++    // Real part: ac - bd + acc_real
++    float16_t real = f16_sub(f16_mul(a, c), f16_mul(b, d));
++
++    // Imaginary part: ad + bc + acc_imag
++    float16_t imag = f16_add(f16_mul(a, d), f16_mul(b, c));
++
++    // Rotation based on bits [27, 26]
++    switch (insn.bits() >> 26 & 0x3) {
++      case 0: // 0 degree (a, b)
++        real = f16_add(real, acc_real);
++        imag = f16_add(imag, acc_imag);
++        break;
++      case 1: // 90 degree (-b, a)
++        real = f16_sub(acc_real, imag);
++        imag = f16_add(real, acc_imag);
++        break;
++      case 2: // 180 degree (-a, -b)
++        real = f16_sub(acc_real, real);
++        imag = f16_sub(acc_imag, imag);
++        break;
++      case 3: // 270 degree (b, -a)
++        real = f16_add(imag, acc_real);
++        imag = f16_sub(acc_imag, real);
++        break;
++    }
++
++    P.VU.elt<float16_t>(rd_num, pair_idx, true) = real;
++    P.VU.elt<float16_t>(rd_num, pair_idx + 1, true) = imag;
++  }
++},
++{
++  // f32 version
++  printf("GGGGGGGGGGGGGGG\n\n");
++  if ((i & 1) == 0) {
++    uint64_t pair_idx = i;
++    float32_t a = P.VU.elt<float32_t>(rs2_num, pair_idx);
++    float32_t b = P.VU.elt<float32_t>(rs2_num, pair_idx + 1);
++    float32_t c = P.VU.elt<float32_t>(rs1_num, pair_idx);
++    float32_t d = P.VU.elt<float32_t>(rs1_num, pair_idx + 1);
++    float32_t acc_real = P.VU.elt<float32_t>(rd_num, pair_idx);
++    float32_t acc_imag = P.VU.elt<float32_t>(rd_num, pair_idx + 1);
++
++    // Real part: ac - bd + acc_real
++    float32_t real = f32_sub(f32_mul(a, c), f32_mul(b, d));
++
++    // Imaginary part: ad + bc + acc_imag
++    float32_t imag = f32_add(f32_mul(a, d), f32_mul(b, c));
++
++    // Rotation based on bits [27, 26]
++    switch (insn.bits() >> 26 & 0x3) {
++      case 0: // 0 degree (a, b)
++        real = f32_add(real, acc_real);
++        imag = f32_add(imag, acc_imag);
++        break;
++      case 1: // 90 degree (-b, a)
++        real = f32_sub(acc_real, imag);
++        imag = f32_add(real, acc_imag);
++        break;
++      case 2: // 180 degree (-a, -b)
++        real = f32_sub(acc_real, real);
++        imag = f32_sub(acc_imag, imag);
++        break;
++      case 3: // 270 degree (b, -a)
++        real = f32_add(imag, acc_real);
++        imag = f32_sub(acc_imag, real);
++        break;
++    }
++
++    P.VU.elt<float32_t>(rd_num, pair_idx, true) = real;
++    P.VU.elt<float32_t>(rd_num, pair_idx + 1, true) = imag;
++  }
++},
++{
++  // f64 version
++  if ((i & 1) == 0) {
++    uint64_t pair_idx = i;
++    float64_t a = P.VU.elt<float64_t>(rs2_num, pair_idx);
++    float64_t b = P.VU.elt<float64_t>(rs2_num, pair_idx + 1);
++    float64_t c = P.VU.elt<float64_t>(rs1_num, pair_idx);
++    float64_t d = P.VU.elt<float64_t>(rs1_num, pair_idx + 1);
++    float64_t acc_real = P.VU.elt<float64_t>(rd_num, pair_idx);
++    float64_t acc_imag = P.VU.elt<float64_t>(rd_num, pair_idx + 1);
++
++    // Real part: ac - bd + acc_real
++    float64_t real = f64_sub(f64_mul(a, c), f64_mul(b, d));
++
++    // Imaginary part: ad + bc + acc_imag
++    float64_t imag = f64_add(f64_mul(a, d), f64_mul(b, c));
++
++    // Rotation based on bits [27, 26]
++    switch (insn.bits() >> 26 & 0x3) {
++      case 0: // 0 degree (a, b)
++        real = f64_add(real, acc_real);
++        imag = f64_add(imag, acc_imag);
++        break;
++      case 1: // 90 degree (-b, a)
++        real = f64_sub(acc_real, imag);
++        imag = f64_add(real, acc_imag);
++        break;
++      case 2: // 180 degree (-a, -b)
++        real = f64_sub(acc_real, real);
++        imag = f64_sub(acc_imag, imag);
++        break;
++      case 3: // 270 degree (b, -a)
++        real = f64_add(imag, acc_real);
++        imag = f64_sub(acc_imag, real);
++        break;
++    }
++
++    P.VU.elt<float64_t>(rd_num, pair_idx, true) = real;
++    P.VU.elt<float64_t>(rd_num, pair_idx + 1, true) = imag;
++  }
++})
+diff --git a/riscv/insns/vrotate_vi.h b/riscv/insns/vrotate_vi.h
+new file mode 100644
+index 00000000..c569f813
+--- /dev/null
++++ b/riscv/insns/vrotate_vi.h
+@@ -0,0 +1,46 @@
++// vrotate.vi vd, vs2, zimm5
++VI_VI_LOOP
++({
++  // Process pairs of elements (real, imaginary)
++  // For complex multiply: (a+bi)(c+di) = (ac-bd) + (ad+bc)i
++  // vs2 and vs1 have the source types, vd has the widened type
++
++  // Get the pair index
++  uint64_t pair_idx = i & ~1;  // Round down to even index
++
++  using Ty = std::remove_reference_t<decltype(vd)>;
++
++  auto a = P.VU.elt<decltype(vs2)>(rs2_num, pair_idx);      // real part from vs2
++  auto b = P.VU.elt<decltype(vs2)>(rs2_num, pair_idx + 1);  // imaginary part from vs2
++  auto& vd_res1 = P.VU.elt<Ty>(rd_num, pair_idx, true);
++  auto& vd_res2 = P.VU.elt<Ty>(rd_num, pair_idx+1, true);
++
++  if ((i & 1) == 0) {
++    switch (simm5)
++    {
++    case 1: // 90 degree
++    {
++      vd_res1 = (Ty)(-b);
++      vd_res2 = (Ty)(a);
++    }
++    break;
++    case 2: // 180 degree
++    {
++      vd_res1 = (Ty)(-a);
++      vd_res2 = (Ty)(-b);
++    }
++    break;
++    case 3: // 270 degree
++    {
++      vd_res1 = (Ty)(b);
++      vd_res2 = (Ty)(-a);
++    }
++    break;
++    default: // do nothing
++    {
++    }
++    break;
++    };
++
++  }
++})
+diff --git a/riscv/riscv.mk.in b/riscv/riscv.mk.in
+index 9a5c377d..5f364b9b 100644
+--- a/riscv/riscv.mk.in
++++ b/riscv/riscv.mk.in
+@@ -707,6 +707,7 @@ riscv_insn_ext_v_alu_fp = \
+ 	vfcvt_xu_f_v \
+ 	vfdiv_vf \
+ 	vfdiv_vv \
++	vcmla_vv \
+ 	vfmacc_vf \
+ 	vfmacc_vv \
+ 	vfmadd_vf \
+-- 
+2.49.0
+

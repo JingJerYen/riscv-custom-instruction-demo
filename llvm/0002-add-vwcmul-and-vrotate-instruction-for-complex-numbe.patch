@@ -1,7 +1,7 @@
 From b6304f8da90fe462f0d4fce02e066f300ce99b14 Mon Sep 17 00:00:00 2001
 From: ycc738 <ycc738@andestech.com>
 Date: Tue, 21 Oct 2025 13:36:48 +0800
-Subject: [PATCH 2/3] add vwcmul and vrotate instruction for complex number
+Subject: [PATCH 2/4] add vwcmul and vrotate instruction for complex number
  array
 
 ---
