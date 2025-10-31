@@ -1,17 +1,17 @@
-From f79071a9dfa270e13ca13722ddcb69adf7392a62 Mon Sep 17 00:00:00 2001
+From b09ea41b37c34b9c6580863d53b75249f32d14f5 Mon Sep 17 00:00:00 2001
 From: ycc738 <ycc738@andestech.com>
 Date: Tue, 28 Oct 2025 14:57:59 +0800
 Subject: [PATCH 4/4] add support for VCMLA
 
 ---
- clang/include/clang/Basic/riscv_vector.td     |  14 ++
- llvm/include/llvm/IR/IntrinsicsRISCV.td       |   3 +
+ clang/include/clang/Basic/riscv_vector.td     |  16 ++
+ llvm/include/llvm/IR/IntrinsicsRISCV.td       |   4 +
  llvm/lib/Target/RISCV/RISCVInstrInfoV.td      |  37 ++++
- .../Target/RISCV/RISCVInstrInfoVPseudos.td    | 177 ++++++++++++++++++
- 4 files changed, 231 insertions(+)
+ .../Target/RISCV/RISCVInstrInfoVPseudos.td    | 188 +++++++++++++++++-
+ 4 files changed, 240 insertions(+), 5 deletions(-)
 
 diff --git a/clang/include/clang/Basic/riscv_vector.td b/clang/include/clang/Basic/riscv_vector.td
-index ddeff205b..f0a26e560 100644
+index ddeff205b..946659448 100644
 --- a/clang/include/clang/Basic/riscv_vector.td
 +++ b/clang/include/clang/Basic/riscv_vector.td
 @@ -216,6 +216,14 @@ let HasMaskedOffOperand = false in {
@@ -29,20 +29,22 @@ index ddeff205b..f0a26e560 100644
  }
  
  let HasMaskedOffOperand = false, Log2LMUL = [-2, -1, 0, 1, 2] in {
-@@ -2077,6 +2085,9 @@ let ManualCodegen = [{
+@@ -2077,6 +2085,10 @@ let ManualCodegen = [{
      defm vfnmadd : RVVFloatingTerBuiltinSetRoundingMode;
      defm vfmsub  : RVVFloatingTerBuiltinSetRoundingMode;
      defm vfnmsub : RVVFloatingTerBuiltinSetRoundingMode;
++    defm vcmla  : RVVFloatingVCMLABuiltinSetRoundingMode;
 +    defm vcmla_rot90  : RVVFloatingVCMLABuiltinSetRoundingMode;
 +    defm vcmla_rot180  : RVVFloatingVCMLABuiltinSetRoundingMode;
 +    defm vcmla_rot270  : RVVFloatingVCMLABuiltinSetRoundingMode;
    }
    // 14.6. Vector Single-Width Floating-Point Fused Multiply-Add Instructions
    defm vfmacc  : RVVFloatingTerBuiltinSet;
-@@ -2087,6 +2098,9 @@ let ManualCodegen = [{
+@@ -2087,6 +2099,10 @@ let ManualCodegen = [{
    defm vfnmadd : RVVFloatingTerBuiltinSet;
    defm vfmsub  : RVVFloatingTerBuiltinSet;
    defm vfnmsub : RVVFloatingTerBuiltinSet;
++  defm vcmla  : RVVFloatingVCMLABuiltinSet;
 +  defm vcmla_rot90  : RVVFloatingVCMLABuiltinSet;
 +  defm vcmla_rot180  : RVVFloatingVCMLABuiltinSet;
 +  defm vcmla_rot270  : RVVFloatingVCMLABuiltinSet;
@@ -50,13 +52,14 @@ index ddeff205b..f0a26e560 100644
  
  let ManualCodegen = [{
 diff --git a/llvm/include/llvm/IR/IntrinsicsRISCV.td b/llvm/include/llvm/IR/IntrinsicsRISCV.td
-index 136d50703..3a2342d48 100644
+index 136d50703..0feefcea6 100644
 --- a/llvm/include/llvm/IR/IntrinsicsRISCV.td
 +++ b/llvm/include/llvm/IR/IntrinsicsRISCV.td
-@@ -1531,6 +1531,9 @@ let TargetPrefix = "riscv" in {
+@@ -1531,6 +1531,10 @@ let TargetPrefix = "riscv" in {
  
    defm vfwmul : RISCVBinaryABXRoundingMode;
  
++  defm vcmla:  RISCVTernaryAAXARoundingMode;
 +  defm vcmla_rot90 :  RISCVTernaryAAXARoundingMode;
 +  defm vcmla_rot180 : RISCVTernaryAAXARoundingMode;
 +  defm vcmla_rot270 : RISCVTernaryAAXARoundingMode;
@@ -119,7 +122,7 @@ index 6a34c1041..eaef20fdc 100644
  } // Predicates = [HasVendorXStar, HasVInstructions]
  
 diff --git a/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td b/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
-index e14c7d57d..9efa01eaf 100644
+index e14c7d57d..512b3a9e4 100644
 --- a/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
 +++ b/llvm/lib/Target/RISCV/RISCVInstrInfoVPseudos.td
 @@ -1148,6 +1148,29 @@ class VPseudoBinaryNoMaskRoundingMode<VReg RetClass,
@@ -304,7 +307,38 @@ index e14c7d57d..9efa01eaf 100644
  class VPatTernaryMaskTA<string intrinsic,
                          string inst,
                          string kind,
-@@ -5781,6 +5914,31 @@ multiclass VPatTernaryWithPolicyRoundingMode<string intrinsic,
+@@ -4836,16 +4969,17 @@ class VROTATEFLAGS<int idx, string name> {
+   string Name = name;
+ }
+ 
+-def VROTATE90: VROTATEFLAGS<1, "rot90">;
+-def VROTATE180 : VROTATEFLAGS<2, "rot180">;
+-def VROTATE270 : VROTATEFLAGS<3, "rot270">;
++def VROTATE0: VROTATEFLAGS<0, "">;
++def VROTATE90: VROTATEFLAGS<1, "_rot90">;
++def VROTATE180 : VROTATEFLAGS<2, "_rot180">;
++def VROTATE270 : VROTATEFLAGS<3, "_rot270">;
+ 
+ multiclass VPatVROTATE<string intrinsic, string instruction, list<VTypeInfo> vtilist> {
+   foreach vrot = [VROTATE90, VROTATE180, VROTATE270] in {
+     foreach vti = vtilist in {
+       let Predicates = GetVTypePredicates<vti>.Predicates in {
+         // Unmasked
+-        def : Pat<(vti.Vector (!cast<Intrinsic>(intrinsic#"_"#vrot.Name)
++        def : Pat<(vti.Vector (!cast<Intrinsic>(intrinsic#vrot.Name)
+                               (vti.Vector vti.RegClass:$merge),
+                               (vti.Vector vti.RegClass:$rs2),
+                               VLOpFrag)),
+@@ -4855,7 +4989,7 @@ multiclass VPatVROTATE<string intrinsic, string instruction, list<VTypeInfo> vti
+                               vrot.Index,
+                               GPR:$vl, vti.Log2SEW, TU_MU)>;
+         // Masked
+-        def : Pat<(vti.Vector (!cast<Intrinsic>(intrinsic#"_"#vrot.Name#"_mask")
++        def : Pat<(vti.Vector (!cast<Intrinsic>(intrinsic#vrot.Name#"_mask")
+                               (vti.Vector vti.RegClass:$merge),
+                               (vti.Vector vti.RegClass:$rs2),
+                               (vti.Mask V0),
+@@ -5781,6 +5915,31 @@ multiclass VPatTernaryWithPolicyRoundingMode<string intrinsic,
                                                  op2_kind>;
  }
  
@@ -336,7 +370,7 @@ index e14c7d57d..9efa01eaf 100644
  multiclass VPatTernaryTA<string intrinsic,
                           string inst,
                           string kind,
-@@ -5841,6 +5999,22 @@ multiclass VPatTernaryV_VV_AAXA_RM<string intrinsic, string instruction,
+@@ -5841,6 +6000,22 @@ multiclass VPatTernaryV_VV_AAXA_RM<string intrinsic, string instruction,
                                               vti.RegClass, vti.RegClass>;
  }
  
@@ -345,10 +379,10 @@ index e14c7d57d..9efa01eaf 100644
 +multiclass VPatTernary_VCMLA<string intrinsic, string instruction,
 +                                list<VTypeInfo> vtilist> {
 +
-+  foreach vrot = [VROTATE90, VROTATE180, VROTATE270] in {
++  foreach vrot = [VROTATE0, VROTATE90, VROTATE180, VROTATE270] in {
 +    foreach vti = vtilist in {
 +      let Predicates = GetVTypePredicates<vti>.Predicates in
-+      defm : VPatTernaryVCMLAWithPolicyRoundingMode<intrinsic#"_"#vrot.Name, instruction, "VV",
++      defm : VPatTernaryVCMLAWithPolicyRoundingMode<intrinsic#vrot.Name, instruction, "VV",
 +                                              vti.Vector, vti.Vector, vti.Vector, vti.Mask,
 +                                              vti.Log2SEW, vti.LMul, vti.RegClass,
 +                                              vti.RegClass, vti.RegClass, vrot.Index>;
@@ -359,7 +393,7 @@ index e14c7d57d..9efa01eaf 100644
  multiclass VPatTernaryV_VX<string intrinsic, string instruction,
                             list<VTypeInfo> vtilist> {
    foreach vti = vtilist in
-@@ -6645,6 +6819,8 @@ defm PseudoVFMADD  : VPseudoVMAC_VV_VF_AAXA_RM;
+@@ -6645,6 +6820,8 @@ defm PseudoVFMADD  : VPseudoVMAC_VV_VF_AAXA_RM;
  defm PseudoVFNMADD : VPseudoVMAC_VV_VF_AAXA_RM;
  defm PseudoVFMSUB  : VPseudoVMAC_VV_VF_AAXA_RM;
  defm PseudoVFNMSUB : VPseudoVMAC_VV_VF_AAXA_RM;
@@ -368,7 +402,7 @@ index e14c7d57d..9efa01eaf 100644
  }
  
  //===----------------------------------------------------------------------===//
-@@ -7313,6 +7489,7 @@ defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfmadd", "PseudoVFMADD", AllFloatVe
+@@ -7313,6 +7490,7 @@ defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfmadd", "PseudoVFMADD", AllFloatVe
  defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfnmadd", "PseudoVFNMADD", AllFloatVectors>;
  defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfmsub", "PseudoVFMSUB", AllFloatVectors>;
  defm : VPatTernaryV_VV_VX_AAXA_RM<"int_riscv_vfnmsub", "PseudoVFNMSUB", AllFloatVectors>;
