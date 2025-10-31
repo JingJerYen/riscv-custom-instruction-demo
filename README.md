@@ -14,9 +14,9 @@ The `xstar` extension includes:
 - `xmac rd, rs1, rs2` - Multiply-accumulate: `rd = rd + (rs1 * rs2)`
 
 ### Vector Instructions
-- `vwcmul.vv` - Widening complex multiply for complex number arrays
-- `vrotate.vi` - Rotate complex numbers by 90/180/270 degrees
-- `vcmla.vv` - Multiply-Add complex float numbers and rotate by 90/180/270 degrees, similar to Aarch64 `VCMLA`
+- `vwcmul.vv vd, vs2, vs1` - Widening complex multiply `vd = vs2 * vs1` for complex number arrays
+- `vrotate.vi vd, imm` - Rotate complex numbers array `vd` by 90/180/270 degrees (imm = 1/2/3)
+- `vcmla.vv vd, vs2, vs1, imm` - Multiply-Add complex float numbers and rotate by 90/180/270 degrees, similar to Aarch64 `VCMLA`, `vd = vd + (vs1 * vs2 * rotation angle 0/90/180/270)`
 
 ## Builtin Functions
 
